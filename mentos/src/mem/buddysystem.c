@@ -39,10 +39,10 @@ page_t *bb_alloc_pages(zone_t *zone, unsigned int order)
 	unsigned int current_order;
 	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
 		// get the free_area_t at index 'current_order'
-		area = // ...
+		area = &(zone->free_area[current_order]);
 
 		// check if area is not empty (is there at least a block here?)
-		if (!list_head_empty(&/*...*/)) {
+		if (!list_head_empty(&(area->free_list))) {
 			goto block_found;
 		}
 	}
@@ -55,17 +55,17 @@ block_found:
 	// Here we have to manage pages. Recall, free_area_t collects the first
 	// page_t of each free block of 2^order contiguous page frames.
 
-	page = list_entry(/*...*/);
+	page = list_entry((area->free_list).next, page_t, lru);
 
 	// Remove page from the list_head in the found free_area_t.
-	list_head_del(/*...*/);
+	list_head_del((area->free_list).next);
 
 	// Set page as taken.
-	page->_count = // ...
+	page->_count = 0;
 	page->private = 0;
 
 	// Decrease the number of free blocks in the found free_area_t.
-	// ...
+		area->nr_free-- ;
 
 	/* We found a block with 2^k page frames to satisfy a request
      * of 2^h page frames. If h < k, then we can split the block with 2^k
@@ -75,27 +75,27 @@ block_found:
 	// We can exploit size(=2^k) to have at each loop the address the page that
 	// resides in the midle of the found block.
 	unsigned int size = 1 << current_order;
-	while (current_order > order) {
+	while (current_order-- > order) {
 
 		// At each loop, we have to set free the right half of the found block.
 
 		// Split the block size in half
-		size = // ...
+		size = size / 2;
 
 		// get the address of the page in the midle of the found block.
-		page_t *buddy = // ...
+		page_t *buddy = page + size;
 
 		// set the order of pages after the buddy page_t (the field 'private')
-		// ...
+		buddy->private = current_order;
 
 		// get the free_area_t collecting blocks with 2^(k-1) page frames
-		area = // ...
+		area = &(zone->free_area[current_order]);
 
 		// add the buddy block in its list of available blocks
-		// ...
+		list_head_add(&(buddy->lru), &(area->free_list));
 
 		// Increase the number of free blocks of the free_area_t.
-		// ...
+		area->nr_free ++;
 	}
 
 	buddy_system_dump(zone);
@@ -112,7 +112,7 @@ void bb_free_pages(zone_t *zone, page_t *page, unsigned int order)
 	unsigned long page_idx = page - base;
 
 	// Set the given page as free
-	page->_count = // ...
+	page->_count = -1;
 
 	// At each loop, check if the buddy block can be merged with page.
 	while (order < MAX_ORDER - 1) {
@@ -125,23 +125,24 @@ void bb_free_pages(zone_t *zone, page_t *page, unsigned int order)
 		// they can be merged. Otherwise, we can stop the while-loop and insert
 		// page in the list of free blocks.
 
-		if (!(/*...it is free...*/ && /*...they have the same size...*/)) {
+		if (!(buddy->_count == -1 && buddy->private == order)) {
 			break;
 		}
 
 		// we are here only if buddy is free and can be merged with page.
 
 		// remove buddy from the list of available blocks in its free_area_t
-		// ....
+		list_head_del(&(buddy->lru));
 
 		// Decrease the number of free block of the current free_area_t.
-		// ...
+		(zone->free_area[buddy->private]).nr_free --;
 
 		// buddy no longer represents a free block, so clear the private field.
 		buddy->private = 0;
 
 		// Update the page index with the index of the coalesced block.
-		// ...
+		if (buddy_idx < page_idx) // se il buddy è a sinistra della page da cancellare
+			page_idx = buddy_idx;
 
 		order++;
 	}
@@ -150,13 +151,13 @@ void bb_free_pages(zone_t *zone, page_t *page, unsigned int order)
 	page_t *coalesced = base + page_idx;
 
 	// Update the field private to set the size.
-	coalesced->private = // ...
+	coalesced->private = order;
 
 	// Insert the coalesced block in the free_area as available block
-	// ...
+	list_head_add(&(coalesced->lru), &((zone->free_area[order]).free_list));
 
 	// Increase the number of free blocks of the free_area.
-	// ...
+	(zone->free_area[order]).nr_free ++;
 
 	buddy_system_dump(zone);
 }
